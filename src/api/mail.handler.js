@@ -1,61 +1,64 @@
 import nodemailer from 'nodemailer'
 import { google } from 'googleapis'
+import mailTransport from './mail.transport.js'
 const OAuth2 = google.auth.OAuth2
 
-const sendMail = (req, res) => {
-    const { firstName, lastName, email, phone, message } = req.body
-    const contentHTLM = `
-        <h1>User information ${firstName} ${lastName}</h1>
-        <ul>
-            <li><p>Mail: ${email}</p></li>
-            <li><p>Phone: ${phone}</p></li>
-            <li><p>Message: ${message}</p></li>
-        </ul>
-    `
+const mailAuth = async (callback) => {
 
+    console.log(mailTransport)
     const oAuth2Client = new OAuth2(
-        process.env.MAIL_CLIENT_ID,
-        process.env.MAIL_CLIENT_SECRET,
+        mailTransport.auth.clientId,
+        mailTransport.auth.clientSecret,
         process.env.MAIL_REDIRECT_URI
     )
 
-    oAuth2Client.setCredentials({ refresh_token: process.env.MAIL_REFRESH_TOKEN })
+    oAuth2Client.setCredentials({
+        refresh_token: mailTransport.auth.refreshToken,
+        tls: {
+            rejectUnauthorized: false
+        }
+    })
 
-    const sendFromGmail = async () => {
+    oAuth2Client.getAccessToken((error, token) => {
+        if (error) {
+            return console.log(error)
+        }
+        mailTransport.auth.refreshToken = token
+
+        callback(nodemailer.createTransport(mailTransport))
+    })
+}
+
+const sendMail = (req, res) => {
+    const { firstName, lastName, email, phone, message } = req.body
+
+    const buildAndSend = async (transport) => {
         try {
-            const accessToken = await oAuth2Client.getAccessToken()
-            const transporter = nodemailer.createTransport({
-                service: 'gmail',
-                auth: {
-                    type: 'OAuth2',
-                    user: process.env.MAIL_FROM,
-                    clientId: process.env.MAIL_CLIENT_ID,
-                    clientSecret: process.env.MAIL_CLIENT_SECRET,
-                    refreshToken: process.env.MAIL_REFRESH_TOKEN,
-                    accessToken
-                }
-            })
-
-            transporter.verify((error) => {
-                if (error) {
-                    console.log(error)
-                } else {
-                    console.log("Ready to Send")
-                }
-            })
-
-            const mailOptions = {
-                from: process.env.MAIL_FROM,
-                to: 'paul-jara@hotmail.com',
-                subject: 'Aviso de interes para Prestación de servicios',
-                html: contentHTLM
-            }
-            const result = await transporter.sendMail(mailOptions)
+            await transport.verify()
+            console.log("Ready to Send")
         } catch (error) {
             console.log(error)
         }
+
+        const contentHTLM =
+            `<h1>User information ${firstName} ${lastName}</h1>
+            <ul>
+                <li><p>Mail: ${email}</p></li>
+                <li><p>Phone: ${phone}</p></li>
+                <li><p>Message: ${message}</p></li>
+            </ul>`
+
+        const mailOptions = {
+            from: process.env.MAIL_FROM,
+            to: 'paul-jara@hotmail.com',
+            subject: 'Aviso de interes para Prestación de servicios',
+            html: contentHTLM
+        }
+
+        const result = await transport.sendMail(mailOptions)
     }
-    sendFromGmail()
+
+    mailAuth(buildAndSend)
         .then(result => res.status(200).send('Message Sent'))
         .catch(error => console.log(error))
 }
